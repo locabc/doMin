@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Canvas Minesweeper Pro</title>
+    <meta name="description" content="High-performance, responsive Minesweeper built with Canvas API and Web Workers.">
+    <style>
+        :root {
+            --bg-color: #f0f2f5;
+            --panel-bg: #ffffff;
+            --text-main: #333;
+            --accent-color: #3b82f6;
+            --danger-color: #ef4444;
+            --success-color: #22c55e;
+            --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden; /* Ngăn cuộn trang web */
+            background-color: var(--bg-color);
+            font-family: var(--font-family);
+            touch-action: none; /* Quan trọng: Chặn hành động zoom/scroll mặc định của trình duyệt trên mobile */
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-tap-highlight-color: transparent; /* Loại bỏ highlight màu xanh khi tap trên Android/iOS */
+        }
+
+        /* UI Layer - Overlays Canvas */
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            z-index: 10;
+        }
+
+        /* Header - Fixed Height 60px */
+        .header {
+            background: var(--panel-bg);
+            padding: 0 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            pointer-events: auto;
+            height: 60px;
+            box-sizing: border-box;
+        }
+
+        .lcd-display {
+            background: #222;
+            color: #ef4444;
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            font-size: 24px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            min-width: 60px;
+            text-align: center;
+            letter-spacing: 2px;
+            box-shadow: inset 0 0 5px rgba(0,0,0,0.5);
+        }
+
+        .face-btn {
+            font-size: 32px; /* To hơn chút cho dễ bấm */
+            cursor: pointer;
+            background: none;
+            border: none;
+            transition: transform 0.1s;
+            padding: 0 10px;
+            line-height: 1;
+        }
+        .face-btn:active { transform: scale(0.9); }
+
+        /* Footer Controls - Fixed Height 70px */
+        .footer {
+            background: var(--panel-bg);
+            padding: 5px 10px;
+            display: flex;
+            justify-content: space-between; /* Dàn đều các nút */
+            align-items: center;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
+            pointer-events: auto;
+            height: 70px;
+            box-sizing: border-box;
+            padding-bottom: env(safe-area-inset-bottom); /* Hỗ trợ iPhone dòng X trở lên */
+        }
+
+        .btn {
+            background: transparent;
+            border: none;
+            border-radius: 12px;
+            padding: 6px 0; /* Giảm padding ngang, tăng vùng chạm bằng width */
+            width: 24%; /* Chia đều 4 nút */
+            font-weight: 600;
+            color: #9ca3af;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-size: 11px;
+            gap: 4px;
+            transition: all 0.2s;
+            position: relative;
+        }
+        /* Tạo vùng chạm ảo lớn hơn cho nút */
+        .btn::after {
+            content: '';
+            position: absolute;
+            top: -5px; bottom: -5px; left: 0; right: 0;
+        }
+
+        .btn svg { width: 26px; height: 26px; fill: currentColor; margin-bottom: 2px;}
+        
+        .btn.active { color: var(--accent-color); }
+        .btn.active svg { transform: scale(1.1); filter: drop-shadow(0 2px 4px rgba(59, 130, 246, 0.3)); }
+        
+        .btn.primary { color: var(--accent-color); }
+        
+        .btn:active { transform: scale(0.95); background-color: #f9fafb; color: var(--text-main); }
+
+        /* Modal Overlay */
+        .modal-overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.6);
+            backdrop-filter: blur(2px);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 20;
+            pointer-events: auto;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.2s;
+        }
+        .modal-overlay.visible { opacity: 1; visibility: visible; }
+
+        .modal {
+            background: white;
+            padding: 24px;
+            border-radius: 16px;
+            width: 85%;
+            max-width: 360px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+            animation: slideUp 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+        }
+
+        @keyframes slideUp {
+            from { transform: translateY(20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        .modal h2 { margin-top: 0; font-size: 20px; color: var(--text-main); text-align: center; margin-bottom: 20px;}
+        
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; margin-bottom: 8px; font-weight: 600; font-size: 14px; color: #4b5563; }
+        
+        /* Mobile friendly inputs */
+        select, input { 
+            width: 100%; 
+            padding: 12px; /* Tăng padding để dễ chạm */
+            border: 2px solid #e5e7eb; 
+            border-radius: 10px; 
+            box-sizing: border-box; 
+            font-size: 16px; /* Font size 16px để tránh iOS tự zoom khi nhập liệu */
+            background-color: #f9fafb;
+            outline: none;
+        }
+        select:focus, input:focus { border-color: var(--accent-color); background-color: #fff; }
+        
+        .btn-primary-action {
+            background: var(--accent-color);
+            color: white;
+            width: 100%;
+            padding: 14px;
+            font-size: 16px;
+            font-weight: 600;
+            border: none;
+            border-radius: 12px;
+            margin-top: 10px;
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(59, 130, 246, 0.25);
+            transition: transform 0.1s;
+        }
+        .btn-primary-action:active { transform: scale(0.98); box-shadow: none; }
+
+        /* Canvas Container - FIXED POSITION */
+        #game-container {
+            position: absolute;
+            top: 60px; 
+            bottom: 70px;
+            left: 0;
+            width: 100%;
+            height: auto;
+            z-index: 1;
+            background-color: #333;
+            overflow: hidden;
+        }
+
+        /* Toast/Notification */
+        #toast {
+            position: absolute;
+            top: 70px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(30, 30, 30, 0.9);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 30px;
+            font-size: 14px;
+            font-weight: 500;
+            opacity: 0;
+            transition: opacity 0.3s, transform 0.3s;
+            pointer-events: none;
+            z-index: 30;
+            white-space: nowrap;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        #toast.show { opacity: 1; transform: translateX(-50%) translateY(10px); }
+
+        /* --- MOBILE OPTIMIZATION MEDIA QUERIES --- */
+        @media (max-width: 480px) {
+            .header { padding: 0 10px; }
+            .lcd-display { font-size: 20px; min-width: 50px; padding: 4px 2px; letter-spacing: 1px; }
+            .face-btn { font-size: 28px; padding: 0 5px; }
+            
+            /* Footer icon tweaks for small screens */
+            .btn span { font-size: 10px; }
+            .btn svg { width: 24px; height: 24px; }
+            
+            /* Custom settings inputs layout */
+            #custom-settings { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+            #custom-settings .form-group:last-child { grid-column: span 2; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Game Container -->
+    <div id="game-container"></div>
+
+    <!-- UI Overlay -->
+    <div id="ui-layer">
+        <header class="header">
+            <div class="lcd-display" id="mine-count">000</div>
+            <button class="face-btn" id="header-face-btn">😊</button>
+            <div class="lcd-display" id="timer">000</div>
+        </header>
+        
+        <div id="toast">Game Started</div>
+
+        <footer class="footer">
+            <!-- Mode Toggle -->
+            <button class="btn active" id="mode-toggle">
+                <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L3.16 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+                <span id="mode-text">Dig</span>
+            </button>
+            
+            <!-- New Game Button (Primary) -->
+            <button class="btn primary" id="new-game-btn">
+                <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z"/></svg>
+                <span>New Game</span>
+            </button>
+
+            <!-- Undo -->
+            <button class="btn" id="undo-btn">
+                <svg viewBox="0 0 24 24"><path d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z"/></svg>
+                <span>Undo</span>
+            </button>
+
+            <!-- Settings -->
+            <button class="btn" id="settings-btn">
+                <svg viewBox="0 0 24 24"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
+                <span>Menu</span>
+            </button>
+        </footer>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settings-modal">
+        <div class="modal">
+            <h2>Game Settings</h2>
+            <div class="form-group">
+                <label for="difficulty">Difficulty</label>
+                <select id="difficulty">
+                    <option value="beginner">Beginner (9x9, 10)</option>
+                    <option value="intermediate">Intermediate (16x16, 40)</option>
+                    <option value="expert">Expert (30x16, 99)</option>
+                    <option value="custom">Custom</option>
+                </select>
+            </div>
+            <div id="custom-settings" style="display:none;">
+                <div class="form-group">
+                    <label>Width</label>
+                    <input type="number" id="c-width" value="20" min="5" max="100">
+                </div>
+                <div class="form-group">
+                    <label>Height</label>
+                    <input type="number" id="c-height" value="20" min="5" max="100">
+                </div>
+                <div class="form-group">
+                    <label>Mines</label>
+                    <input type="number" id="c-mines" value="50" min="1">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="theme-select">Theme</label>
+                <select id="theme-select">
+                    <option value="light">Classic Light</option>
+                    <option value="dark">Dark Mode</option>
+                    <option value="high-contrast">High Contrast</option>
+                </select>
+            </div>
+            <button class="btn-primary-action" id="save-settings">Apply & Restart</button>
+        </div>
+    </div>
+
+    <!-- WORKER SCRIPT (No changes needed here) -->
+    <script id="worker-script" type="javascript/worker">
+        let grid = null;
+        let width = 0;
+        let height = 0;
+        let totalMines = 0;
+        let revealedCount = 0;
+        let isFirstClick = true;
+
+        const MASK_MINE = 9;
+        const MASK_REVEALED = 16;
+        const MASK_FLAGGED = 32;
+
+        self.onmessage = function(e) {
+            const { type, payload } = e.data;
+            
+            switch (type) {
+                case 'INIT':
+                    width = payload.width;
+                    height = payload.height;
+                    totalMines = payload.mines;
+                    grid = new Uint8Array(width * height);
+                    isFirstClick = true;
+                    revealedCount = 0;
+                    self.postMessage({ type: 'INIT_COMPLETE', width, height, grid: grid });
+                    break;
+
+                case 'CLICK':
+                    if (!grid) return;
+                    handleClick(payload.index, payload.mode);
+                    break;
+                
+                case 'RESTORE':
+                    grid = payload.grid;
+                    revealedCount = payload.revealedCount;
+                    isFirstClick = false;
+                    self.postMessage({ type: 'UPDATE', grid: grid });
+                    break;
+            }
+        };
+
+        function getNeighbors(idx) {
+            const neighbors = [];
+            const r = Math.floor(idx / width);
+            const c = idx % width;
+            for (let dr = -1; dr <= 1; dr++) {
+                for (let dc = -1; dc <= 1; dc++) {
+                    if (dr === 0 && dc === 0) continue;
+                    const nr = r + dr;
+                    const nc = c + dc;
+                    if (nr >= 0 && nr < height && nc >= 0 && nc < width) {
+                        neighbors.push(nr * width + nc);
+                    }
+                }
+            }
+            return neighbors;
+        }
+
+        function generateBoard(safeIndex) {
+            let minesPlaced = 0;
+            const safeZone = new Set(getNeighbors(safeIndex));
+            safeZone.add(safeIndex);
+
+            while (minesPlaced < totalMines) {
+                const idx = Math.floor(Math.random() * (width * height));
+                if ((grid[idx] & 15) !== MASK_MINE && !safeZone.has(idx)) {
+                    grid[idx] = (grid[idx] & ~15) | MASK_MINE;
+                    minesPlaced++;
+                }
+            }
+
+            for (let i = 0; i < grid.length; i++) {
+                if ((grid[i] & 15) === MASK_MINE) continue;
+                let count = 0;
+                const neighbors = getNeighbors(i);
+                for (const n of neighbors) {
+                    if ((grid[n] & 15) === MASK_MINE) count++;
+                }
+                grid[i] = (grid[i] & ~15) | count;
+            }
+            isFirstClick = false;
+        }
+
+        function floodFill(startIndex) {
+            const queue = [startIndex];
+            const revealed = [];
+            while (queue.length > 0) {
+                const idx = queue.shift();
+                if (grid[idx] & MASK_REVEALED) continue;
+                grid[idx] |= MASK_REVEALED;
+                revealedCount++;
+                revealed.push(idx);
+                const val = grid[idx] & 15;
+                if (val === 0) {
+                    const neighbors = getNeighbors(idx);
+                    for (const n of neighbors) {
+                        if (!(grid[n] & MASK_REVEALED) && !(grid[n] & MASK_FLAGGED)) {
+                            queue.push(n); 
+                        }
+                    }
+                }
+            }
+            return revealed;
+        }
+
+        function handleClick(index, mode) {
+            const gridSnapshot = new Uint8Array(grid); 
+            
+            if (isFirstClick && mode === 'reveal') {
+                generateBoard(index);
+            }
+
+            let gameOver = false;
+            let win = false;
+            let changedIndices = [];
+
+            if (mode === 'flag') {
+                if (!(grid[index] & MASK_REVEALED)) {
+                    grid[index] ^= MASK_FLAGGED;
+                    changedIndices.push(index);
+                }
+            } else if (mode === 'reveal') {
+                if (grid[index] & MASK_FLAGGED) return;
+                if (grid[index] & MASK_REVEALED) {
+                    // Chord
+                    const val = grid[index] & 15;
+                    const neighbors = getNeighbors(index);
+                    const flagCount = neighbors.reduce((acc, n) => acc + ((grid[n] & MASK_FLAGGED) ? 1 : 0), 0);
+                    if (flagCount === val) {
+                        for (const n of neighbors) {
+                            if (!(grid[n] & MASK_FLAGGED) && !(grid[n] & MASK_REVEALED)) {
+                                if ((grid[n] & 15) === MASK_MINE) {
+                                    gameOver = true;
+                                    grid[n] |= MASK_REVEALED;
+                                } else {
+                                    changedIndices.push(...floodFill(n));
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    if ((grid[index] & 15) === MASK_MINE) {
+                        grid[index] |= MASK_REVEALED;
+                        gameOver = true;
+                        changedIndices.push(index);
+                    } else {
+                        changedIndices.push(...floodFill(index));
+                    }
+                }
+            }
+
+            if (!gameOver && revealedCount === (width * height - totalMines)) {
+                win = true;
+                for(let i=0; i<grid.length; i++) if((grid[i] & 15) === MASK_MINE) grid[i] |= MASK_FLAGGED;
+            }
+
+            self.postMessage({
+                type: gameOver ? 'GAME_OVER' : (win ? 'WIN' : 'UPDATE'),
+                grid: grid,
+                changed: changedIndices,
+                snapshot: { grid: gridSnapshot, revealedCount: revealedCount - changedIndices.length }
+            });
+        }
+    </script>
+
+    <!-- MAIN APP LOGIC -->
+    <script type="module">
+        const THEMES = {
+            light: { bg: '#bdbdbd', cellHidden: '#c6c6c6', cellBevelLight: '#fff', cellBevelDark: '#7b7b7b', text: '#000', mine: '#000' },
+            dark: { 
+            bg: '#212121',           // Xám đen nhẹ nhàng hơn #1a1a1a
+            cellHidden: '#424242',   // Xám trung bình, dễ nhìn hơn #2d2d2d
+            cellBevelLight: '#616161', // Bevel sáng dịu hơn #3d3d3d  
+            cellBevelDark: '#121212',  // Đen than thay #111 (dễ nhìn hơn)
+            text: '#e0e0e0',         // Trắng xám thay #fff (không chói)
+            mine: '#ff6b6b'          // Đỏ cam dịu thay #ef4444
+        },
+        'high-contrast': { 
+            bg: '#0a0a0a',           // Đen thuần hơn một chút
+            cellHidden: '#1e40af',   // Blue navy sáng hơn #000080 (dễ nhìn)
+            cellBevelLight: '#f8fafc', // Trắng xám nhạt thay #fff
+            cellBevelDark: '#f8fafc',  // Trắng xám nhạt thay #fff  
+            text: '#fbbf24',         // Vàng cam thay #ffff00 (ấm áp hơn)
+            mine: '#f1f5f9'          // Xám trắng thay #fff (tinh tế)
+        }
+        };
+        
+        const COLORS = [null, '#0000ff', '#008000', '#ff0000', '#000080', '#800000', '#008080', '#000000', '#808080'];
+
+        class Renderer {
+            constructor(container, theme = 'light') {
+                this.container = container;
+                this.canvas = document.createElement('canvas');
+                this.ctx = this.canvas.getContext('2d', { alpha: false });
+                this.container.appendChild(this.canvas);
+                
+                this.theme = THEMES[theme];
+                this.tileSize = 32;
+                this.sprites = {};
+                this.viewport = { x: 0, y: 0, scale: 1 };
+                this.particles = [];
+
+                this.resize();
+                window.addEventListener('resize', () => this.resize());
+                this.generateSprites();
+            }
+
+            setTheme(themeName) {
+                this.theme = THEMES[themeName];
+                this.generateSprites();
+                this.requestDraw();
+            }
+
+            resize() {
+                // Lấy kích thước từ container (đã fixed bởi CSS)
+                const rect = this.container.getBoundingClientRect();
+                const dpr = window.devicePixelRatio || 1;
+                
+                // Cập nhật resolution thực tế
+                this.canvas.width = rect.width * dpr;
+                this.canvas.height = rect.height * dpr;
+                
+                // Cập nhật kích thước hiển thị CSS
+                this.canvas.style.width = `${rect.width}px`;
+                this.canvas.style.height = `${rect.height}px`;
+                
+                this.ctx.scale(dpr, dpr);
+                this.width = rect.width;
+                this.height = rect.height;
+                this.requestDraw();
+            }
+
+            generateSprites() {
+                const s = this.tileSize;
+                const makeSprite = (drawFn) => {
+                    const c = document.createElement('canvas');
+                    c.width = s; c.height = s;
+                    const x = c.getContext('2d');
+                    drawFn(x, s);
+                    return c;
+                };
+                // (Code vẽ sprite giữ nguyên như cũ)
+                this.sprites.hidden = makeSprite((ctx, s) => {
+                    ctx.fillStyle = this.theme.cellHidden;
+                    ctx.fillRect(0, 0, s, s);
+                    ctx.fillStyle = this.theme.cellBevelLight;
+                    ctx.beginPath(); ctx.moveTo(0,s); ctx.lineTo(0,0); ctx.lineTo(s,0); ctx.lineTo(s-3,3); ctx.lineTo(3,3); ctx.lineTo(3,s-3); ctx.fill();
+                    ctx.fillStyle = this.theme.cellBevelDark;
+                    ctx.beginPath(); ctx.moveTo(s,0); ctx.lineTo(s,s); ctx.lineTo(0,s); ctx.lineTo(3,s-3); ctx.lineTo(s-3,s-3); ctx.lineTo(s-3,3); ctx.fill();
+                });
+                this.sprites.revealed = makeSprite((ctx, s) => {
+                    ctx.fillStyle = this.theme.bg;
+                    ctx.fillRect(0,0,s,s);
+                    ctx.strokeStyle = '#999';
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(0,0,s,s);
+                });
+                for (let i = 1; i <= 8; i++) {
+                    this.sprites[i] = makeSprite((ctx, s) => {
+                        ctx.drawImage(this.sprites.revealed, 0, 0);
+                        ctx.fillStyle = COLORS[i];
+                        ctx.font = `bold ${s*0.7}px monospace`;
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(i, s/2, s/2 + 2);
+                    });
+                }
+                this.sprites.mine = makeSprite((ctx, s) => {
+                    ctx.drawImage(this.sprites.revealed, 0, 0);
+                    ctx.fillStyle = this.theme.mine;
+                    ctx.beginPath(); ctx.arc(s/2, s/2, s/4, 0, Math.PI*2); ctx.fill();
+                    ctx.fillRect(s/2-2, s/4, 4, s/2);
+                    ctx.fillRect(s/4, s/2-2, s/2, 4);
+                });
+                this.sprites.flag = makeSprite((ctx, s) => {
+                    ctx.drawImage(this.sprites.hidden, 0, 0);
+                    ctx.fillStyle = '#ef4444';
+                    ctx.beginPath(); ctx.moveTo(s/3, s/5); ctx.lineTo(s*0.7, s/3.5); ctx.lineTo(s/3, s/2); ctx.fill();
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(s/3, s/5, 2, s*0.6);
+                });
+                this.sprites.exploded = makeSprite((ctx, s) => {
+                     ctx.drawImage(this.sprites.mine, 0, 0);
+                     ctx.fillStyle = 'rgba(255, 0, 0, 0.4)';
+                     ctx.fillRect(0,0,s,s);
+                });
+            }
+
+            screenToWorld(sx, sy) {
+                return {
+                    c: Math.floor((sx - this.viewport.x) / (this.tileSize * this.viewport.scale)),
+                    r: Math.floor((sy - this.viewport.y) / (this.tileSize * this.viewport.scale))
+                };
+            }
+
+            addParticles(r, c) {
+                const x = this.viewport.x + c * this.tileSize * this.viewport.scale + (this.tileSize/2);
+                const y = this.viewport.y + r * this.tileSize * this.viewport.scale + (this.tileSize/2);
+                for(let i=0; i<10; i++) {
+                    this.particles.push({
+                        x, y, vx: (Math.random() - 0.5) * 10, vy: (Math.random() - 0.5) * 10, life: 1.0,
+                        color: ['#f00', '#ff0', '#fb0'][Math.floor(Math.random()*3)]
+                    });
+                }
+                this.animate();
+            }
+            
+            animate() {
+                if (this.animating) return;
+                this.animating = true;
+                const loop = () => {
+                    if (this.particles.length > 0) {
+                        this.draw(this.lastGrid, this.lastGridW);
+                        requestAnimationFrame(loop);
+                    } else {
+                        this.animating = false;
+                        this.draw(this.lastGrid, this.lastGridW);
+                    }
+                };
+                requestAnimationFrame(loop);
+            }
+
+            requestDraw() {
+                if (this.lastGrid) this.draw(this.lastGrid, this.lastGridW);
+            }
+
+            draw(grid, cols) {
+                if(!grid) return; // Safety check
+                this.lastGrid = grid;
+                this.lastGridW = cols;
+                
+                this.ctx.fillStyle = '#333'; 
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                const ts = this.tileSize * this.viewport.scale;
+                const rows = grid.length / cols;
+                const startCol = Math.floor(-this.viewport.x / ts);
+                const startRow = Math.floor(-this.viewport.y / ts);
+                const endCol = startCol + Math.ceil(this.width / ts) + 1;
+                const endRow = startRow + Math.ceil(this.height / ts) + 1;
+
+                for (let r = Math.max(0, startRow); r < Math.min(rows, endRow); r++) {
+                    for (let c = Math.max(0, startCol); c < Math.min(cols, endCol); c++) {
+                        const idx = r * cols + c;
+                        const cell = grid[idx];
+                        const x = this.viewport.x + c * ts;
+                        const y = this.viewport.y + r * ts;
+                        const val = cell & 15;
+                        const revealed = cell & 16;
+                        const flagged = cell & 32;
+
+                        if (flagged) {
+                            this.ctx.drawImage(this.sprites.flag, x, y, ts, ts);
+                        } else if (!revealed) {
+                            this.ctx.drawImage(this.sprites.hidden, x, y, ts, ts);
+                        } else {
+                            if (val === 9) this.ctx.drawImage(this.sprites.mine, x, y, ts, ts);
+                            else if (val > 0) this.ctx.drawImage(this.sprites[val], x, y, ts, ts);
+                            else this.ctx.drawImage(this.sprites.revealed, x, y, ts, ts);
+                        }
+                    }
+                }
+
+                if (this.particles.length > 0) {
+                    for (let i = this.particles.length - 1; i >= 0; i--) {
+                        const p = this.particles[i];
+                        p.x += p.vx; p.y += p.vy; p.life -= 0.05;
+                        this.ctx.globalAlpha = p.life; this.ctx.fillStyle = p.color;
+                        this.ctx.fillRect(p.x, p.y, 4, 4);
+                        this.ctx.globalAlpha = 1.0;
+                        if (p.life <= 0) this.particles.splice(i, 1);
+                    }
+                }
+            }
+        }
+
+        class Game {
+            constructor() {
+                this.settings = { difficulty: 'beginner', width: 9, height: 9, mines: 10, theme: 'light' };
+                this.mode = 'reveal';
+                this.undoStack = [];
+                this.isPlaying = false;
+
+                const blob = new Blob([document.getElementById('worker-script').textContent], {type: "text/javascript"});
+                this.worker = new Worker(window.URL.createObjectURL(blob));
+                this.worker.onmessage = (e) => this.handleWorkerMessage(e.data);
+
+                this.renderer = new Renderer(document.getElementById('game-container'), this.settings.theme);
+
+                this.setupUI();
+                this.setupInput();
+                this.newGame();
+            }
+
+            setupUI() {
+                this.els = {
+                    mineCount: document.getElementById('mine-count'),
+                    timer: document.getElementById('timer'),
+                    face: document.getElementById('header-face-btn'),
+                    modeBtn: document.getElementById('mode-toggle'),
+                    modeText: document.getElementById('mode-text'),
+                    modal: document.getElementById('settings-modal'),
+                    toast: document.getElementById('toast')
+                };
+
+                // Helper để rung phản hồi
+                const vibrate = (ms = 15) => { if (navigator.vibrate) navigator.vibrate(ms); };
+
+                // Nút New Game
+                document.getElementById('new-game-btn').onclick = () => {
+                    vibrate(20);
+                    this.newGame();
+                }
+
+                // Nút Reset Header
+                this.els.face.onclick = () => {
+                    vibrate(20);
+                    this.newGame();
+                };
+                
+                // Toggle Mode
+                document.getElementById('mode-toggle').onclick = () => {
+                    vibrate(10);
+                    this.mode = this.mode === 'reveal' ? 'flag' : 'reveal';
+                    this.els.modeText.textContent = this.mode === 'reveal' ? 'Dig' : 'Flag';
+                    
+                    const iconPath = this.mode === 'reveal' 
+                        ? "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L3.16 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"
+                        : "M14.4 6L14 4H5v17h2v-7h5.6l.4 2h7V6z"; 
+                    
+                    this.els.modeBtn.querySelector('path').setAttribute('d', iconPath);
+                    this.els.modeBtn.classList.toggle('active', this.mode === 'flag');
+                    
+                    this.showToast(`${this.mode.toUpperCase()}`);
+                };
+
+                document.getElementById('settings-btn').onclick = () => this.els.modal.classList.add('visible');
+                
+                // Overlay click to close
+                this.els.modal.addEventListener('click', (e) => {
+                    if(e.target === this.els.modal) this.els.modal.classList.remove('visible');
+                });
+
+                document.getElementById('save-settings').onclick = () => {
+                    const diff = document.getElementById('difficulty').value;
+                    this.settings.theme = document.getElementById('theme-select').value;
+                    this.renderer.setTheme(this.settings.theme);
+
+                    if(diff === 'custom') {
+                        this.settings.width = parseInt(document.getElementById('c-width').value);
+                        this.settings.height = parseInt(document.getElementById('c-height').value);
+                        this.settings.mines = parseInt(document.getElementById('c-mines').value);
+                    } else if (diff === 'beginner') {
+                        this.settings.width=9; this.settings.height=9; this.settings.mines=10;
+                    } else if (diff === 'intermediate') {
+                        this.settings.width=16; this.settings.height=16; this.settings.mines=40;
+                    } else if (diff === 'expert') {
+                        this.settings.width=30; this.settings.height=16; this.settings.mines=99;
+                    }
+                    
+                    this.els.modal.classList.remove('visible');
+                    this.newGame();
+                };
+                document.getElementById('difficulty').onchange = (e) => {
+                    document.getElementById('custom-settings').style.display = e.target.value === 'custom' ? 'grid' : 'none';
+                };
+                document.getElementById('undo-btn').onclick = () => {
+                    vibrate(10);
+                    this.undo();
+                }
+            }
+
+                        setupInput() {
+                const canvas = this.renderer.canvas;
+
+                // Chỉ lắng nghe chạm/tap — KHÔNG cho kéo, không drag, không zoom
+                const handleTap = (clientX, clientY) => {
+                    if (!this.isPlaying) return;
+                    const rect = canvas.getBoundingClientRect();
+                    const x = clientX - rect.left;
+                    const y = clientY - rect.top;
+                    this.handleInput(x, y, this.mode);
+                };
+
+                // Mouse click trái = dig/reveal
+                canvas.addEventListener('click', e => {
+                    e.preventDefault();
+                    handleTap(e.clientX, e.clientY);
+                });
+
+                // Chuột phải = cắm cờ (và chặn menu chuột phải)
+                canvas.addEventListener('contextmenu', e => {
+                    e.preventDefault();
+                    if (!this.isPlaying) return;
+                    const rect = canvas.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    this.handleInput(x, y, 'flag');
+                });
+
+                // Touch = tap bình thường
+                canvas.addEventListener('touchstart', e => {
+                    e.preventDefault();
+                    if (e.touches.length === 1) {
+                        const t = e.touches[0];
+                        handleTap(t.clientX, t.clientY);
+                    }
+                }, { passive: false });
+
+                // Long press để cắm cờ (giữ 400ms)
+                let longPressTimer;
+                canvas.addEventListener('touchstart', e => {
+                    if (e.touches.length !== 1) return;
+                    const t = e.touches[0];
+                    longPressTimer = setTimeout(() => {
+                        if (navigator.vibrate) navigator.vibrate(50);
+                        this.showToast('Flagged');
+                        const rect = canvas.getBoundingClientRect();
+                        const x = t.clientX - rect.left;
+                        const y = t.clientY - rect.top;
+                        this.handleInput(x, y, 'flag');
+                    }, 400);
+                }, { passive: true });
+
+                canvas.addEventListener('touchend', e => {
+                    clearTimeout(longPressTimer);
+                });
+                canvas.addEventListener('touchmove', e => {
+                    e.preventDefault(); // Chặn scroll khi chạm
+                }, { passive: false });
+            }
+
+            handleInput(sx, sy, action) {
+                if (!this.isPlaying) return;
+                const coords = this.renderer.screenToWorld(sx, sy);
+                if (coords.c >= 0 && coords.c < this.settings.width && coords.r >= 0 && coords.r < this.settings.height) {
+                    const idx = coords.r * this.settings.width + coords.c;
+                    this.worker.postMessage({ type: 'CLICK', payload: { index: idx, mode: action } });
+                }
+            }
+
+            handleWorkerMessage(data) {
+                switch (data.type) {
+                    case 'INIT_COMPLETE':
+                        this.isPlaying = true;
+                        this.startTime = Date.now();
+                        this.startTimer();
+                        
+                        if (data.grid) {
+                            this.renderer.draw(data.grid, data.width);
+                            this.centerBoard();
+                        }
+                        break;
+                    case 'UPDATE':
+                        this.updateGrid(data.grid);
+                        if (data.snapshot) this.pushUndo(data.snapshot);
+                        break;
+                    case 'GAME_OVER':
+                        if(navigator.vibrate) navigator.vibrate(400); // Rung dài khi thua
+                        this.updateGrid(data.grid);
+                        this.endGame(false, data.changed);
+                        break;
+                    case 'WIN':
+                        if(navigator.vibrate) navigator.vibrate([100, 50, 100]); // Rung kiểu chiến thắng
+                        this.updateGrid(data.grid);
+                        this.endGame(true);
+                        break;
+                }
+            }
+
+            newGame() {
+                this.stopTimer();
+                this.els.timer.textContent = '000';
+                this.els.mineCount.textContent = this.settings.mines.toString().padStart(3, '0');
+                this.els.face.textContent = '😊';
+                this.undoStack = [];
+                this.showToast("New Game Started");
+                
+                this.worker.postMessage({ type: 'INIT', payload: { ...this.settings } });
+            }
+
+            pushUndo(snapshot) {
+                if (this.undoStack.length > 10) this.undoStack.shift();
+                this.undoStack.push(snapshot);
+            }
+
+            undo() {
+                if (this.undoStack.length === 0 || !this.isPlaying) return;
+                const state = this.undoStack.pop();
+                if (state) {
+                   this.worker.postMessage({ type: 'RESTORE', payload: state });
+                   this.showToast('Undo');
+                }
+            }
+
+            updateGrid(gridData) {
+                this.renderer.draw(gridData, this.settings.width);
+                let flags = 0;
+                for(let i=0; i<gridData.length; i++) if(gridData[i] & 32) flags++;
+                this.els.mineCount.textContent = Math.max(0, this.settings.mines - flags).toString().padStart(3, '0');
+            }
+
+            endGame(win, changed) {
+                this.isPlaying = false;
+                this.stopTimer();
+                this.els.face.textContent = win ? '😎' : '😵';
+                this.showToast(win ? 'VICTORY!' : 'GAME OVER');
+                this.els.toast.classList.add('show');
+                setTimeout(() => this.els.toast.classList.remove('show'), 2000);
+                
+                if (!win && changed && changed.length > 0) {
+                    const last = changed[changed.length-1];
+                    const r = Math.floor(last / this.settings.width);
+                    const c = last % this.settings.width;
+                    this.renderer.addParticles(r, c);
+                }
+            }
+
+            startTimer() {
+                this.stopTimer();
+                let seconds = 0;
+                this.timerInterval = setInterval(() => {
+                    seconds++;
+                    this.els.timer.textContent = Math.min(999, seconds).toString().padStart(3, '0');
+                }, 1000);
+            }
+
+            stopTimer() { if (this.timerInterval) clearInterval(this.timerInterval); }
+
+            centerBoard() {
+                const w = this.settings.width * this.renderer.tileSize;
+                const h = this.settings.height * this.renderer.tileSize;
+                const viewW = this.renderer.canvas.width / window.devicePixelRatio;
+                const viewH = this.renderer.canvas.height / window.devicePixelRatio;
+                let scale = Math.min(viewW / w, viewH / h) * 0.9;
+                scale = Math.min(Math.max(scale, 0.5), 2.0);
+                this.renderer.viewport.scale = scale;
+                this.renderer.viewport.x = (viewW - w * scale) / 2;
+                this.renderer.viewport.y = (viewH - h * scale) / 2;
+                this.renderer.requestDraw();
+            }
+
+            showToast(msg) {
+                const t = this.els.toast;
+                t.textContent = msg; 
+                t.classList.add('show');
+                setTimeout(() => t.classList.remove('show'), 2000);
+            }
+        }
+
+        window.onload = () => { new Game(); };
+    </script>
+</body>
+</html>
