@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="vi">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Canvas Minesweeper Pro</title>
+    <title>Dò Mìn V.1</title>
     <meta name="description" content="High-performance, responsive Minesweeper built with Canvas API and Web Workers.">
     <style>
         :root {
@@ -208,17 +208,16 @@
             overflow: hidden;
         }
 
-        /* Toast/Notification */
         #toast {
-            position: absolute;
-            top: 70px;
-            left: 50%;
+            position: fixed;
+            top: 10px;
+            left: 42%;
             transform: translateX(-50%);
             background: rgba(30, 30, 30, 0.9);
             color: white;
             padding: 10px 20px;
             border-radius: 30px;
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 500;
             opacity: 0;
             transition: opacity 0.3s, transform 0.3s;
@@ -227,7 +226,17 @@
             white-space: nowrap;
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         }
-        #toast.show { opacity: 1; transform: translateX(-50%) translateY(10px); }
+        #toast.show { opacity: 1;  }
+        /* RESPONSIVE MOBILE - TỰ ĐỘNG ĐIỀU CHỈNH */
+        @media (max-width: 480px) {
+            #toast {
+                top: 76px;                      /* Gần header hơn trên màn nhỏ */
+                left: 50%;
+                font-size: 13.5px;
+                padding: 10px 20px;
+                max-width: 90vw;                /* Không bị tràn màn hình */
+            }
+        }
 
         /* --- MOBILE OPTIMIZATION MEDIA QUERIES --- */
         @media (max-width: 480px) {
@@ -493,28 +502,6 @@
 
     <!-- MAIN APP LOGIC -->
     <script type="module">
-        const THEMES = {
-            light: { bg: '#bdbdbd', cellHidden: '#c6c6c6', cellBevelLight: '#fff', cellBevelDark: '#7b7b7b', text: '#000', mine: '#000' },
-            dark: { 
-            bg: '#212121',           // Xám đen nhẹ nhàng hơn #1a1a1a
-            cellHidden: '#424242',   // Xám trung bình, dễ nhìn hơn #2d2d2d
-            cellBevelLight: '#616161', // Bevel sáng dịu hơn #3d3d3d  
-            cellBevelDark: '#121212',  // Đen than thay #111 (dễ nhìn hơn)
-            text: '#e0e0e0',         // Trắng xám thay #fff (không chói)
-            mine: '#ff6b6b'          // Đỏ cam dịu thay #ef4444
-        },
-        'high-contrast': { 
-            bg: '#0a0a0a',           // Đen thuần hơn một chút
-            cellHidden: '#1e40af',   // Blue navy sáng hơn #000080 (dễ nhìn)
-            cellBevelLight: '#f8fafc', // Trắng xám nhạt thay #fff
-            cellBevelDark: '#f8fafc',  // Trắng xám nhạt thay #fff  
-            text: '#fbbf24',         // Vàng cam thay #ffff00 (ấm áp hơn)
-            mine: '#f1f5f9'          // Xám trắng thay #fff (tinh tế)
-        }
-        };
-        
-        const COLORS = [null, '#0000ff', '#008000', '#ff0000', '#000080', '#800000', '#008080', '#000000', '#808080'];
-
         class Renderer {
             constructor(container, theme = 'light') {
                 this.container = container;
@@ -522,11 +509,9 @@
                 this.ctx = this.canvas.getContext('2d', { alpha: false });
                 this.container.appendChild(this.canvas);
                 
-                this.theme = THEMES[theme];
                 this.tileSize = 32;
                 this.sprites = {};
                 this.viewport = { x: 0, y: 0, scale: 1 };
-                this.particles = [];
 
                 this.resize();
                 window.addEventListener('resize', () => this.resize());
@@ -534,7 +519,7 @@
             }
 
             setTheme(themeName) {
-                this.theme = THEMES[themeName];
+                // Theme không còn được sử dụng vì sprites được tạo từ ảnh
                 this.generateSprites();
                 this.requestDraw();
             }
@@ -558,94 +543,11 @@
                 this.requestDraw();
             }
 
-            generateSprites() {
-                const s = this.tileSize;
-                const makeSprite = (drawFn) => {
-                    const c = document.createElement('canvas');
-                    c.width = s; c.height = s;
-                    const x = c.getContext('2d');
-                    drawFn(x, s);
-                    return c;
-                };
-                // (Code vẽ sprite giữ nguyên như cũ)
-                this.sprites.hidden = makeSprite((ctx, s) => {
-                    ctx.fillStyle = this.theme.cellHidden;
-                    ctx.fillRect(0, 0, s, s);
-                    ctx.fillStyle = this.theme.cellBevelLight;
-                    ctx.beginPath(); ctx.moveTo(0,s); ctx.lineTo(0,0); ctx.lineTo(s,0); ctx.lineTo(s-3,3); ctx.lineTo(3,3); ctx.lineTo(3,s-3); ctx.fill();
-                    ctx.fillStyle = this.theme.cellBevelDark;
-                    ctx.beginPath(); ctx.moveTo(s,0); ctx.lineTo(s,s); ctx.lineTo(0,s); ctx.lineTo(3,s-3); ctx.lineTo(s-3,s-3); ctx.lineTo(s-3,3); ctx.fill();
-                });
-                this.sprites.revealed = makeSprite((ctx, s) => {
-                    ctx.fillStyle = this.theme.bg;
-                    ctx.fillRect(0,0,s,s);
-                    ctx.strokeStyle = '#999';
-                    ctx.lineWidth = 1;
-                    ctx.strokeRect(0,0,s,s);
-                });
-                for (let i = 1; i <= 8; i++) {
-                    this.sprites[i] = makeSprite((ctx, s) => {
-                        ctx.drawImage(this.sprites.revealed, 0, 0);
-                        ctx.fillStyle = COLORS[i];
-                        ctx.font = `bold ${s*0.7}px monospace`;
-                        ctx.textAlign = 'center';
-                        ctx.textBaseline = 'middle';
-                        ctx.fillText(i, s/2, s/2 + 2);
-                    });
-                }
-                this.sprites.mine = makeSprite((ctx, s) => {
-                    ctx.drawImage(this.sprites.revealed, 0, 0);
-                    ctx.fillStyle = this.theme.mine;
-                    ctx.beginPath(); ctx.arc(s/2, s/2, s/4, 0, Math.PI*2); ctx.fill();
-                    ctx.fillRect(s/2-2, s/4, 4, s/2);
-                    ctx.fillRect(s/4, s/2-2, s/2, 4);
-                });
-                this.sprites.flag = makeSprite((ctx, s) => {
-                    ctx.drawImage(this.sprites.hidden, 0, 0);
-                    ctx.fillStyle = '#ef4444';
-                    ctx.beginPath(); ctx.moveTo(s/3, s/5); ctx.lineTo(s*0.7, s/3.5); ctx.lineTo(s/3, s/2); ctx.fill();
-                    ctx.fillStyle = '#000';
-                    ctx.fillRect(s/3, s/5, 2, s*0.6);
-                });
-                this.sprites.exploded = makeSprite((ctx, s) => {
-                     ctx.drawImage(this.sprites.mine, 0, 0);
-                     ctx.fillStyle = 'rgba(255, 0, 0, 0.4)';
-                     ctx.fillRect(0,0,s,s);
-                });
-            }
-
             screenToWorld(sx, sy) {
                 return {
                     c: Math.floor((sx - this.viewport.x) / (this.tileSize * this.viewport.scale)),
                     r: Math.floor((sy - this.viewport.y) / (this.tileSize * this.viewport.scale))
                 };
-            }
-
-            addParticles(r, c) {
-                const x = this.viewport.x + c * this.tileSize * this.viewport.scale + (this.tileSize/2);
-                const y = this.viewport.y + r * this.tileSize * this.viewport.scale + (this.tileSize/2);
-                for(let i=0; i<10; i++) {
-                    this.particles.push({
-                        x, y, vx: (Math.random() - 0.5) * 10, vy: (Math.random() - 0.5) * 10, life: 1.0,
-                        color: ['#f00', '#ff0', '#fb0'][Math.floor(Math.random()*3)]
-                    });
-                }
-                this.animate();
-            }
-            
-            animate() {
-                if (this.animating) return;
-                this.animating = true;
-                const loop = () => {
-                    if (this.particles.length > 0) {
-                        this.draw(this.lastGrid, this.lastGridW);
-                        requestAnimationFrame(loop);
-                    } else {
-                        this.animating = false;
-                        this.draw(this.lastGrid, this.lastGridW);
-                    }
-                };
-                requestAnimationFrame(loop);
             }
 
             requestDraw() {
@@ -682,21 +584,19 @@
                         } else if (!revealed) {
                             this.ctx.drawImage(this.sprites.hidden, x, y, ts, ts);
                         } else {
-                            if (val === 9) this.ctx.drawImage(this.sprites.mine, x, y, ts, ts);
+                            if (val === 9) {
+                                // Kiểm tra xem đây có phải là mìn vừa nổ không
+                                if (this.explodedMinePos && this.explodedMinePos.r === r && this.explodedMinePos.c === c) {
+                                    // Dùng ảnh min.png cho mìn bị dò trúng
+                                    this.ctx.drawImage(this.sprites.explodedMine, x, y, ts, ts);
+                                } else {
+                                    // Mìn bình thường
+                                    this.ctx.drawImage(this.sprites.mine, x, y, ts, ts);
+                                }
+                            }
                             else if (val > 0) this.ctx.drawImage(this.sprites[val], x, y, ts, ts);
                             else this.ctx.drawImage(this.sprites.revealed, x, y, ts, ts);
                         }
-                    }
-                }
-
-                if (this.particles.length > 0) {
-                    for (let i = this.particles.length - 1; i >= 0; i--) {
-                        const p = this.particles[i];
-                        p.x += p.vx; p.y += p.vy; p.life -= 0.05;
-                        this.ctx.globalAlpha = p.life; this.ctx.fillStyle = p.color;
-                        this.ctx.fillRect(p.x, p.y, 4, 4);
-                        this.ctx.globalAlpha = 1.0;
-                        if (p.life <= 0) this.particles.splice(i, 1);
                     }
                 }
             }
@@ -704,7 +604,7 @@
 
         class Game {
             constructor() {
-                this.settings = { difficulty: 'beginner', width: 9, height: 9, mines: 10, theme: 'light' };
+                this.settings = { difficulty: 'beginner', width: 9, height: 9, mines: 7, theme: 'light' };
                 this.mode = 'reveal';
                 this.undoStack = [];
                 this.isPlaying = false;
@@ -779,11 +679,11 @@
                         this.settings.height = parseInt(document.getElementById('c-height').value);
                         this.settings.mines = parseInt(document.getElementById('c-mines').value);
                     } else if (diff === 'beginner') {
-                        this.settings.width=9; this.settings.height=9; this.settings.mines=10;
+                        this.settings.width=9; this.settings.height=9; this.settings.mines=7;
                     } else if (diff === 'intermediate') {
-                        this.settings.width=16; this.settings.height=16; this.settings.mines=40;
+                        this.settings.width=16; this.settings.height=16; this.settings.mines=30;
                     } else if (diff === 'expert') {
-                        this.settings.width=30; this.settings.height=16; this.settings.mines=99;
+                        this.settings.width=30; this.settings.height=16; this.settings.mines=69;
                     }
                     
                     this.els.modal.classList.remove('visible');
@@ -935,13 +835,6 @@
                 this.showToast(win ? 'VICTORY!' : 'GAME OVER');
                 this.els.toast.classList.add('show');
                 setTimeout(() => this.els.toast.classList.remove('show'), 2000);
-                
-                if (!win && changed && changed.length > 0) {
-                    const last = changed[changed.length-1];
-                    const r = Math.floor(last / this.settings.width);
-                    const c = last % this.settings.width;
-                    this.renderer.addParticles(r, c);
-                }
             }
 
             startTimer() {
@@ -975,8 +868,130 @@
                 setTimeout(() => t.classList.remove('show'), 2000);
             }
         }
+        
 
-        window.onload = () => { new Game(); };
+        const digitsImg = new Image();
+        digitsImg.src = 'tiles.jpg'; 
+
+        const explodedMineImg = new Image();
+        explodedMineImg.src = 'min.png'; 
+
+        Renderer.prototype.generateSprites = function() {
+            const s = this.tileSize;
+            const makeSprite = (drawFn) => {
+                const c = document.createElement('canvas');
+                c.width = s; c.height = s;
+                const ctx = c.getContext('2d');
+                drawFn(ctx, s);
+                return c;
+            };
+
+            const frameSize = 32;
+
+            const drawPure = (index) => makeSprite((ctx, s) => {
+                if (digitsImg.complete) {
+                    ctx.drawImage(digitsImg, index * frameSize, 0, frameSize, frameSize, 0, 0, s, s);
+                }
+            });
+
+            const drawOnGray = (index) => makeSprite((ctx, s) => {
+                ctx.drawImage(this.sprites.revealed, 0, 0);
+                if (digitsImg.complete) {
+                    ctx.drawImage(digitsImg, index * frameSize, 0, frameSize, frameSize, 0, 0, s, s);
+                }
+            });
+
+            this.sprites.revealed = drawPure(0);
+            this.sprites.hidden = drawPure(10);
+            this.sprites.flag = drawPure(11);
+            this.sprites.mine = drawOnGray(9);
+            
+            // Sprite cho mìn bị dò trúng từ min.png
+            this.sprites.explodedMine = makeSprite((ctx, s) => {
+                if (explodedMineImg.complete) {
+                    // Vẽ ảnh 28x28 ở giữa ô 32x32 để đẹp hơn
+                    const imgSize = 28;
+                    const offset = (s - imgSize) / 2;
+                    ctx.drawImage(explodedMineImg, 0, 0, 32, 32, offset, offset, imgSize, imgSize);
+                }
+            });
+
+            for (let i = 1; i <= 8; i++) {
+                this.sprites[i] = drawOnGray(i);
+            }
+        };
+
+        // Sửa endGame để lưu vị trí mìn vừa nổ + hiển thị ô còn lại
+        const originalEndGame = Game.prototype.endGame;
+        Game.prototype.endGame = function(win, changed) {
+            originalEndGame.call(this, win, changed);
+
+            if (!win && changed && changed.length > 0) {
+                const last = changed[changed.length - 1];
+                const r = Math.floor(last / this.settings.width);
+                const c = last % this.settings.width;
+
+                // Lưu vị trí mìn vừa nổ để tô đỏ
+                this.renderer.explodedMinePos = { r, c };
+                this.renderer.requestDraw();
+
+                // Hiện tất cả mìn còn lại
+                for (let i = 0; i < this.renderer.lastGrid.length; i++) {
+                    if ((this.renderer.lastGrid[i] & 15) === 9) {
+                        this.renderer.lastGrid[i] |= 16; // reveal
+                    }
+                }
+                this.renderer.requestDraw();
+            }
+
+            // Hiển thị số ô còn lại cần mở để thắng
+            const totalSafeCells = this.settings.width * this.settings.height - this.settings.mines;
+            const remaining = totalSafeCells - this.renderer.lastGrid.filter(c => c & 16 && (c & 15) !== 9).length;
+            this.showToast(win ? 'VICTORY!' : `GAME OVER `);
+        };
+
+        // Cập nhật hiển thị số ô còn lại khi chơi (live update)
+        const originalUpdateGrid = Game.prototype.updateGrid;
+        Game.prototype.updateGrid = function(gridData) {
+            originalUpdateGrid.call(this, gridData);
+
+            if (this.isPlaying) {
+                const totalSafe = this.settings.width * this.settings.height - this.settings.mines;
+                const revealedSafe = gridData.filter(c => (c & 16) && (c & 15) !== 9).length;
+                const remaining = totalSafe - revealedSafe;
+                document.getElementById('toast').textContent = `Còn ${remaining} ô`;
+                if (remaining <= 10) {
+                    document.getElementById('toast').classList.add('show');
+                    setTimeout(() => document.getElementById('toast').classList.remove('show'), 1500);
+                }
+            }
+        };
+
+        // Reset vị trí mìn nổ khi chơi lại
+        const originalNewGame = Game.prototype.newGame;
+        Game.prototype.newGame = function() {
+            this.renderer.explodedMinePos = null;
+            originalNewGame.call(this);
+        };
+
+        // Tạo lại sprite khi ảnh load xong + KHÔNG CÒN PARTICLE/RUNG
+        digitsImg.onload = () => {
+            if (window.gameInstance) {
+                window.gameInstance.renderer.generateSprites();
+                window.gameInstance.renderer.requestDraw();
+            }
+        };
+
+        explodedMineImg.onload = () => {
+            if (window.gameInstance) {
+                window.gameInstance.renderer.generateSprites();
+                window.gameInstance.renderer.requestDraw();
+            }
+        };
+
+        window.onload = () => { 
+            window.gameInstance = new Game(); 
+        };
     </script>
 </body>
 </html>
